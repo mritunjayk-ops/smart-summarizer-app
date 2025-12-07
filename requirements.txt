@@ -1,7 +1,7 @@
 streamlit>=1.32.0
 python-dotenv>=1.0.0
 
-# LangChain (pinned to avoid breaking imports)
+# LangChain 
 langchain-core>=0.1.22,<0.2.0
 langchain>=0.1.1,<0.2.0
 langchain-community>=0.0.22,<0.2.0
