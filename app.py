@@ -1,5 +1,5 @@
 import validators, streamlit as st
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains.summarize import load_summarize_chain
 from langchain_community.document_loaders import UnstructuredURLLoader
@@ -60,7 +60,7 @@ COMPREHENSIVE SUMMARY:"""
 combine_prompt = PromptTemplate(template=combine_prompt_template, input_variables=["text"])
 
 # For the direct "stuff" approach
-stuff_prompt_template = """Summarize the following content in about 300 words:
+stuff_prompt_template = """Summarize the following content in about 300-400 words:
 Content: {text}
 SUMMARY:"""
 stuff_prompt = PromptTemplate(template=stuff_prompt_template, input_variables=["text"])
@@ -122,7 +122,7 @@ def load_youtube_transcript(url):
             author = "Unknown Author"
         
         # Create a document with metadata
-        from langchain.schema import Document
+        from langchain_core.documents import Document
         doc = Document(
             page_content=transcript_text,
             metadata={"source": url, "title": title, "author": author}
