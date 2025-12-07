@@ -5,9 +5,6 @@ from langchain_groq import ChatGroq
 from langchain.chains.summarize import load_summarize_chain
 from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain.chains import RetrievalQA
 import requests
 import traceback
 import re
@@ -22,30 +19,30 @@ st.set_page_config(
 )
 
 st.title("🦙LangChain: Summarize Youtube Videos and Web Pages")
-st.subheader("Please enter a Youtube video URL or a web page URL to get started.")
+st.subheader("Enter a YouTube video URL or a web page URL to get started.")
 
 with st.sidebar:
     groq_api_key = st.text_input("Enter your Groq API Key", type="password")
-    st.subheader("Advanced Settings")
+    st.subheader("Summary Settings")
     summarization_type = st.radio(
-        "Select Summarization Method",
-        ["Basic (Stuff)", "Advanced (Map-Reduce)"],
-        index=0
+        "Summary mode",
+        ["Basic (fast)", "Advanced (better for long content)"],
+        index=0,
     )
     model_name = st.selectbox(
-        "Select Groq Model",
+        "Model",
         [
-            "gemma2-9b-it",
-            "llama-3.1-8b-instant",
+            "gemma2-9b-it",                 # fast
+            "llama-3.1-8b-instant",         # fast/balanced
             "deepseek-r1-distill-llama-70b",
             "qwen/qwen3-32b",
             "openai/gpt-oss-120b",
         ],
-        index=0
+        index=0,
     )
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.0, 0.1)
+    temperature = st.slider("Creativity (temperature)", 0.0, 1.0, 0.0, 0.1)
 
-URL = st.text_input("Enter a Youtube video URL or a web page URL", label_visibility="collapsed")
+URL = st.text_input("Paste YouTube or web page URL", label_visibility="collapsed")
 
 map_prompt_template = """Write a concise summary of the following content:
 {text}
@@ -63,7 +60,7 @@ SUMMARY:"""
 stuff_prompt = PromptTemplate(template=stuff_prompt_template, input_variables=["text"])
 
 
-def is_url_accessible(url):
+def is_url_accessible(url: str) -> bool:
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.head(url, headers=headers, timeout=5)
@@ -72,13 +69,13 @@ def is_url_accessible(url):
         return False
 
 
-def extract_video_id(url):
-    youtube_regex = r'(https?://)?(www\.)?youtube\.(com|nl)/watch\?v=([^&]+)'
+def extract_video_id(url: str):
+    youtube_regex = r"(https?://)?(www\.)?youtube\.(com|nl)/watch\?v=([^&]+)"
     match = re.match(youtube_regex, url)
     if match:
         return match.group(4)
 
-    youtube_short_regex = r'(https?://)?(www\.)?youtu\.be/([^?]+)'
+    youtube_short_regex = r"(https?://)?(www\.)?youtu\.be/([^?]+)"
     match = re.match(youtube_short_regex, url)
     if match:
         return match.group(3)
@@ -90,7 +87,12 @@ def extract_video_id(url):
     return None
 
 
-def load_youtube_transcript(url):
+@st.cache_data(show_spinner=False)
+def cached_youtube_transcript(url: str):
+    return _load_youtube_transcript(url)
+
+
+def _load_youtube_transcript(url: str):
     try:
         video_id = extract_video_id(url)
         if not video_id:
@@ -132,47 +134,51 @@ def load_youtube_transcript(url):
         return None, msg
 
 
+@st.cache_data(show_spinner=False)
+def cached_web_documents(url: str):
+    loader = UnstructuredURLLoader(
+        urls=[url],
+        ssl_verify=False,
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    return loader.load()
+
+
 if st.button("Summarize"):
     try:
         if not groq_api_key:
             st.error("Please enter your Groq API Key.")
         elif not URL:
-            st.error("Please enter a Youtube video URL or a web page URL.")
-        elif not (validators.url(URL) and (URL.startswith("http") or URL.startswith("https"))):
-            st.error("Please enter a valid URL.")
+            st.error("Please enter a YouTube video URL or a web page URL.")
+        elif not (validators.url(URL) and (URL.startswith("http://") or URL.startswith("https://"))):
+            st.error("Please enter a valid URL starting with http or https.")
         else:
             is_youtube = "youtube.com" in URL or "youtu.be" in URL
 
             try:
-                with st.spinner("Loading Content..."):
+                with st.spinner("Loading content..."):
                     if is_youtube:
-                        documents, error = load_youtube_transcript(URL)
+                        documents, error = cached_youtube_transcript(URL)
                         if error:
                             st.error(f"Error loading YouTube transcript: {error}")
                             st.stop()
                     else:
                         if not is_url_accessible(URL):
-                            st.error("Unable to access the URL.")
+                            st.error("Unable to access the URL. Please check that it is correct and publicly accessible.")
                             st.stop()
-
-                        loader = UnstructuredURLLoader(
-                            urls=[URL],
-                            ssl_verify=False,
-                            headers={"User-Agent": "Mozilla/5.0"},
-                        )
-                        documents = loader.load()
+                        documents = cached_web_documents(URL)
 
                     if not documents:
                         st.error("No content could be extracted.")
                         st.stop()
             except Exception as e:
                 st.error(f"Error loading content: {str(e)}")
-                st.error(f"{traceback.format_exc()}")
+                st.error(traceback.format_exc())
                 st.stop()
 
             try:
                 text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
+                    chunk_size=1500,
                     chunk_overlap=200,
                 )
                 docs = text_splitter.split_documents(documents)
@@ -182,6 +188,12 @@ if st.button("Summarize"):
             except Exception as e:
                 st.error(f"Error processing content: {str(e)}")
                 st.stop()
+
+            total_len = sum(len(doc.page_content) for doc in docs)
+            use_map_reduce = (
+                summarization_type == "Advanced (better for long content)"
+                and total_len > 8000
+            )
 
             try:
                 llm = ChatGroq(
@@ -193,9 +205,9 @@ if st.button("Summarize"):
                 st.error(f"Error initializing Groq API: {str(e)}")
                 st.stop()
 
-            with st.spinner(f"Summarizing Content using {summarization_type}..."):
+            with st.spinner("Summarizing..."):
                 try:
-                    if summarization_type == "Basic (Stuff)":
+                    if not use_map_reduce:
                         chain = load_summarize_chain(
                             llm,
                             chain_type="stuff",
@@ -208,22 +220,24 @@ if st.button("Summarize"):
                             chain_type="map_reduce",
                             map_prompt=map_prompt,
                             combine_prompt=combine_prompt,
-                            verbose=True,
+                            verbose=False,
                         )
                         summary = chain.run(docs)
                 except Exception as e:
                     st.error(f"Error during summarization: {str(e)}")
-                    st.error(f"{traceback.format_exc()}")
+                    st.error(traceback.format_exc())
                     st.stop()
 
-            st.subheader("Summary:")
+            st.subheader("Summary")
             st.write(summary)
 
-            with st.expander("Document Statistics"):
+            with st.expander("Details"):
                 st.write(f"Number of chunks: {len(docs)}")
-                total_len = sum(len(doc.page_content) for doc in docs)
-                st.write(f"Total content length: {total_len}")
-                st.write(f"Summarization method: {summarization_type}")
+                st.write(f"Total content length: {total_len} characters")
+                st.write(
+                    "Engine used: "
+                    + ("Advanced (map-reduce)" if use_map_reduce else "Basic (stuff)")
+                )
 
                 if is_youtube and documents:
                     metadata = getattr(documents[0], "metadata", {}) or {}
@@ -234,10 +248,10 @@ if st.button("Summarize"):
                     if author:
                         st.write(f"Author: {author}")
 
-            st.success("Summary generated successfully!")
+            st.success("Summary generated!")
             st.balloons()
 
     except Exception as e:
         st.error(f"Unexpected error: {str(e)}")
-        st.error(f"{traceback.format_exc()}")
+        st.error(traceback.format_exc())
         st.stop()
