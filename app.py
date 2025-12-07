@@ -1,15 +1,16 @@
 import validators
 import streamlit as st
 from langchain_core.prompts import PromptTemplate
+from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langchain.chains.summarize import load_summarize_chain
-from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import requests
 import traceback
 import re
 from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
+from bs4 import BeautifulSoup
 
 st.set_page_config(
     page_title="LangChain Groq",
@@ -42,7 +43,6 @@ with st.sidebar:
 
 URL = st.text_input("Paste YouTube or web page URL", label_visibility="collapsed")
 
-# PROMPTS: detailed bullet-point notes, maximum coverage, not short summary
 map_prompt_template = """You are helping to create detailed study notes from a larger document.
 
 Task for this chunk:
@@ -149,8 +149,6 @@ def _load_youtube_transcript(url: str):
             title = "Unknown Title"
             author = "Unknown Author"
 
-        from langchain_core.documents import Document
-
         doc = Document(
             page_content=transcript_text,
             metadata={"source": url, "title": title, "author": author},
@@ -168,16 +166,27 @@ def _load_youtube_transcript(url: str):
 
 @st.cache_data(show_spinner=False)
 def cached_web_documents(url: str):
-    loader = UnstructuredURLLoader(
-        urls=[url],
-        ssl_verify=False,
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
-    return loader.load()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get(url, headers=headers, timeout=15)
+    resp.raise_for_status()
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+
+    raw_text = soup.get_text("\n")
+    lines = [line.strip() for line in raw_text.splitlines()]
+    lines = [line for line in lines if line]
+    text = "\n".join(lines)
+
+    if not text.strip():
+        raise ValueError("No readable text content found on the page.")
+
+    doc = Document(page_content=text, metadata={"source": url})
+    return [doc]
 
 
 def advanced_summarize(llm, docs, map_prompt: PromptTemplate, combine_prompt: PromptTemplate, max_chunks: int = 18) -> str:
-    # Summarize each chunk into bullet points, then combine all bullet lists.
     selected_docs = docs[:max_chunks]
     summaries = []
 
