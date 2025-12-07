@@ -58,7 +58,7 @@ Bullet-point notes for this chunk:
 """
 map_prompt = PromptTemplate(template=map_prompt_template, input_variables=["text"])
 
-combine_prompt_template = """You are given bullet-point notes from multiple chunks of a larger document.
+combine_prompt_template = """You are given bullet-point notes from multiple parts of a larger document.
 
 Your task:
 - Merge them into ONE coherent set of bullet-point notes in Markdown.
@@ -67,7 +67,7 @@ Your task:
 - Organize notes by topic with clear top-level bullets and sub-bullets.
 - Do NOT aggressively shorten; these are revision notes, not a brief summary.
 
-Chunk notes:
+Notes:
 {text}
 
 Final combined bullet-point notes:
@@ -186,20 +186,25 @@ def cached_web_documents(url: str):
     return [doc]
 
 
-def advanced_summarize(llm, docs, map_prompt: PromptTemplate, combine_prompt: PromptTemplate, max_chunks: int = 18) -> str:
-    selected_docs = docs[:max_chunks]
+def advanced_summarize(llm, docs, map_prompt: PromptTemplate, combine_prompt: PromptTemplate) -> str:
     summaries = []
-
-    for doc in selected_docs:
+    for doc in docs:
         text = doc.page_content
         prompt_text = map_prompt.format(text=text)
         res = llm.invoke(prompt_text)
         summaries.append(res.content)
 
-    combined_text = "\n\n".join(summaries)
-    final_prompt = combine_prompt.format(text=combined_text)
-    final_res = llm.invoke(final_prompt)
-    return final_res.content
+    while len(summaries) > 1:
+        new_summaries = []
+        for i in range(0, len(summaries), 4):
+            group = summaries[i:i + 4]
+            group_text = "\n\n".join(group)
+            final_prompt = combine_prompt.format(text=group_text)
+            res = llm.invoke(final_prompt)
+            new_summaries.append(res.content)
+        summaries = new_summaries
+
+    return summaries[0]
 
 
 if st.button("Summarize"):
@@ -262,20 +267,20 @@ if st.button("Summarize"):
 
             with st.spinner("Summarizing into detailed bullet-point notes..."):
                 try:
-                    if not use_advanced:
-                        chain = load_summarize_chain(
-                            llm,
-                            chain_type="stuff",
-                            prompt=stuff_prompt,
-                        )
-                        summary = chain.run(docs)
-                    else:
+                    if use_advanced:
                         summary = advanced_summarize(
                             llm,
                             docs,
                             map_prompt=map_prompt,
                             combine_prompt=combine_prompt,
                         )
+                    else:
+                        chain = load_summarize_chain(
+                            llm,
+                            chain_type="stuff",
+                            prompt=stuff_prompt,
+                        )
+                        summary = chain.run(docs)
                 except Exception as e:
                     st.error(f"Error during summarization: {str(e)}")
                     st.error(traceback.format_exc())
@@ -289,7 +294,7 @@ if st.button("Summarize"):
                 st.write(f"Total content length: {total_len} characters")
                 st.write(
                     "Engine used: "
-                    + ("Advanced (custom chunk-wise notes)" if use_advanced else "Basic (single-pass notes)")
+                    + ("Advanced (hierarchical chunk-wise notes)" if use_advanced else "Basic (single-pass notes)")
                 )
 
                 if is_youtube and documents:
