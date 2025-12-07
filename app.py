@@ -22,7 +22,6 @@ st.set_page_config(
 )
 
 st.title("🦙LangChain: Summarize Youtube Videos and Web Pages")
-
 st.subheader("Please enter a Youtube video URL or a web page URL to get started.")
 
 with st.sidebar:
@@ -35,7 +34,13 @@ with st.sidebar:
     )
     model_name = st.selectbox(
         "Select Groq Model",
-        ["gemma2-9b-it", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b"],
+        [
+            "gemma2-9b-it",
+            "llama-3.1-8b-instant",
+            "deepseek-r1-distill-llama-70b",
+            "qwen/qwen3-32b",
+            "openai/gpt-oss-120b",
+        ],
         index=0
     )
     temperature = st.slider("Temperature", 0.0, 1.0, 0.0, 0.1)
@@ -60,9 +65,7 @@ stuff_prompt = PromptTemplate(template=stuff_prompt_template, input_variables=["
 
 def is_url_accessible(url):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
+        headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.head(url, headers=headers, timeout=5)
         return 200 <= response.status_code < 400
     except Exception:
@@ -81,8 +84,8 @@ def extract_video_id(url):
         return match.group(3)
 
     parsed_url = urlparse(url)
-    if 'youtube.com' in parsed_url.netloc:
-        return parse_qs(parsed_url.query).get('v', [None])[0]
+    if "youtube.com" in parsed_url.netloc:
+        return parse_qs(parsed_url.query).get("v", [None])[0]
 
     return None
 
@@ -121,7 +124,12 @@ def load_youtube_transcript(url):
 
         return [doc], None
     except Exception as e:
-        return None, str(e)
+        msg = str(e)
+        if "IP has been blocked" in msg or "RequestBlocked" in msg or "IpBlocked" in msg:
+            return None, "YouTube is blocking transcript requests from this server. Try running the app on your own machine instead."
+        if "Could not retrieve a transcript" in msg:
+            return None, "No transcript could be retrieved for this video. It may have transcripts disabled or be blocked."
+        return None, msg
 
 
 if st.button("Summarize"):
@@ -150,7 +158,7 @@ if st.button("Summarize"):
                         loader = UnstructuredURLLoader(
                             urls=[URL],
                             ssl_verify=False,
-                            headers={"User-Agent": "Mozilla/5.0"}
+                            headers={"User-Agent": "Mozilla/5.0"},
                         )
                         documents = loader.load()
 
@@ -165,7 +173,7 @@ if st.button("Summarize"):
             try:
                 text_splitter = RecursiveCharacterTextSplitter(
                     chunk_size=1000,
-                    chunk_overlap=200
+                    chunk_overlap=200,
                 )
                 docs = text_splitter.split_documents(documents)
                 if not docs:
@@ -177,9 +185,9 @@ if st.button("Summarize"):
 
             try:
                 llm = ChatGroq(
-                    model=model_name.lower(),
+                    model=model_name,
                     temperature=temperature,
-                    groq_api_key=groq_api_key
+                    groq_api_key=groq_api_key,
                 )
             except Exception as e:
                 st.error(f"Error initializing Groq API: {str(e)}")
@@ -188,7 +196,11 @@ if st.button("Summarize"):
             with st.spinner(f"Summarizing Content using {summarization_type}..."):
                 try:
                     if summarization_type == "Basic (Stuff)":
-                        chain = load_summarize_chain(llm, chain_type="stuff", prompt=stuff_prompt)
+                        chain = load_summarize_chain(
+                            llm,
+                            chain_type="stuff",
+                            prompt=stuff_prompt,
+                        )
                         summary = chain.run(docs)
                     else:
                         chain = load_summarize_chain(
@@ -196,7 +208,7 @@ if st.button("Summarize"):
                             chain_type="map_reduce",
                             map_prompt=map_prompt,
                             combine_prompt=combine_prompt,
-                            verbose=True
+                            verbose=True,
                         )
                         summary = chain.run(docs)
                 except Exception as e:
@@ -209,15 +221,18 @@ if st.button("Summarize"):
 
             with st.expander("Document Statistics"):
                 st.write(f"Number of chunks: {len(docs)}")
-                st.write(f"Total content length: {sum(len(doc.page_content) for doc in docs)}")
+                total_len = sum(len(doc.page_content) for doc in docs)
+                st.write(f"Total content length: {total_len}")
                 st.write(f"Summarization method: {summarization_type}")
 
                 if is_youtube and documents:
-                    metadata = documents[0].metadata
-                    if metadata.get("title"):
-                        st.write(f"Video Title: {metadata['title']}")
-                    if metadata.get("author"):
-                        st.write(f"Author: {metadata['author']}")
+                    metadata = getattr(documents[0], "metadata", {}) or {}
+                    title = metadata.get("title")
+                    author = metadata.get("author")
+                    if title:
+                        st.write(f"Video Title: {title}")
+                    if author:
+                        st.write(f"Author: {author}")
 
             st.success("Summary generated successfully!")
             st.balloons()
