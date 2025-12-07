@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 st.title("🦙LangChain: Summarize Youtube Videos and Web Pages")
-st.subheader("Enter a YouTube video URL or a web page URL to get started.")
+st.subheader("Enter a YouTube video URL or a web page URL to get detailed notes.")
 
 with st.sidebar:
     groq_api_key = st.text_input("Enter your Groq API Key", type="password")
@@ -42,19 +42,53 @@ with st.sidebar:
 
 URL = st.text_input("Paste YouTube or web page URL", label_visibility="collapsed")
 
-map_prompt_template = """Write a concise summary of the following content:
+# PROMPTS: detailed bullet-point notes, maximum coverage, not short summary
+map_prompt_template = """You are helping to create detailed study notes from a larger document.
+
+Task for this chunk:
+- Turn the content into bullet-point notes in Markdown.
+- Capture every important fact, definition, example, and data point from THIS CHUNK.
+- Use concise wording but do not drop distinct points.
+- Use nested bullets where helpful.
+
+Chunk:
 {text}
-CONCISE SUMMARY:"""
+
+Bullet-point notes for this chunk:
+"""
 map_prompt = PromptTemplate(template=map_prompt_template, input_variables=["text"])
 
-combine_prompt_template = """Combine these summaries into a single comprehensive summary of about 300 words:
+combine_prompt_template = """You are given bullet-point notes from multiple chunks of a larger document.
+
+Your task:
+- Merge them into ONE coherent set of bullet-point notes in Markdown.
+- Remove duplicates and merge overlapping/identical points.
+- Keep all distinct facts, definitions, examples, and data points.
+- Organize notes by topic with clear top-level bullets and sub-bullets.
+- Do NOT aggressively shorten; these are revision notes, not a brief summary.
+
+Chunk notes:
 {text}
-COMPREHENSIVE SUMMARY:"""
+
+Final combined bullet-point notes:
+"""
 combine_prompt = PromptTemplate(template=combine_prompt_template, input_variables=["text"])
 
-stuff_prompt_template = """Summarize the following content in about 300 words:
-Content: {text}
-SUMMARY:"""
+stuff_prompt_template = """You are an assistant that creates detailed, structured notes.
+
+Read the content below and produce comprehensive bullet-point notes in Markdown.
+
+Requirements:
+- Capture every important fact, definition, example, and data point.
+- Group related ideas using nested bullets.
+- Follow the structure and topics of the original text as much as possible.
+- Do NOT omit important information. Compress wording, but keep all distinct points.
+
+Content:
+{text}
+
+Return only the bullet-point notes in Markdown:
+"""
 stuff_prompt = PromptTemplate(template=stuff_prompt_template, input_variables=["text"])
 
 
@@ -142,7 +176,8 @@ def cached_web_documents(url: str):
     return loader.load()
 
 
-def advanced_summarize(llm, docs, map_prompt: PromptTemplate, combine_prompt: PromptTemplate, max_chunks: int = 12) -> str:
+def advanced_summarize(llm, docs, map_prompt: PromptTemplate, combine_prompt: PromptTemplate, max_chunks: int = 18) -> str:
+    # Summarize each chunk into bullet points, then combine all bullet lists.
     selected_docs = docs[:max_chunks]
     summaries = []
 
@@ -204,10 +239,7 @@ if st.button("Summarize"):
                 st.stop()
 
             total_len = sum(len(doc.page_content) for doc in docs)
-            use_advanced = (
-                summarization_type == "Advanced (better for long content)"
-                and total_len > 8000
-            )
+            use_advanced = summarization_type == "Advanced (better for long content)"
 
             try:
                 llm = ChatGroq(
@@ -219,7 +251,7 @@ if st.button("Summarize"):
                 st.error(f"Error initializing Groq API: {str(e)}")
                 st.stop()
 
-            with st.spinner("Summarizing..."):
+            with st.spinner("Summarizing into detailed bullet-point notes..."):
                 try:
                     if not use_advanced:
                         chain = load_summarize_chain(
@@ -240,15 +272,15 @@ if st.button("Summarize"):
                     st.error(traceback.format_exc())
                     st.stop()
 
-            st.subheader("Summary")
-            st.write(summary)
+            st.subheader("Detailed Notes (Bullet Points)")
+            st.markdown(summary)
 
             with st.expander("Details"):
                 st.write(f"Number of chunks: {len(docs)}")
                 st.write(f"Total content length: {total_len} characters")
                 st.write(
                     "Engine used: "
-                    + ("Advanced (custom map-reduce)" if use_advanced else "Basic (stuff)")
+                    + ("Advanced (custom chunk-wise notes)" if use_advanced else "Basic (single-pass notes)")
                 )
 
                 if is_youtube and documents:
@@ -260,7 +292,7 @@ if st.button("Summarize"):
                     if author:
                         st.write(f"Author: {author}")
 
-            st.success("Summary generated!")
+            st.success("Detailed notes generated!")
             st.balloons()
 
     except Exception as e:
