@@ -32,9 +32,7 @@ with st.sidebar:
     model_name = st.selectbox(
         "Model",
         [
-            "gemma2-9b-it",                 # fast
-            "llama-3.1-8b-instant",         # fast/balanced
-            "deepseek-r1-distill-llama-70b",
+            "llama-3.1-8b-instant",
             "qwen/qwen3-32b",
             "openai/gpt-oss-120b",
         ],
@@ -144,6 +142,22 @@ def cached_web_documents(url: str):
     return loader.load()
 
 
+def advanced_summarize(llm, docs, map_prompt: PromptTemplate, combine_prompt: PromptTemplate, max_chunks: int = 12) -> str:
+    selected_docs = docs[:max_chunks]
+    summaries = []
+
+    for doc in selected_docs:
+        text = doc.page_content
+        prompt_text = map_prompt.format(text=text)
+        res = llm.invoke(prompt_text)
+        summaries.append(res.content)
+
+    combined_text = "\n\n".join(summaries)
+    final_prompt = combine_prompt.format(text=combined_text)
+    final_res = llm.invoke(final_prompt)
+    return final_res.content
+
+
 if st.button("Summarize"):
     try:
         if not groq_api_key:
@@ -190,7 +204,7 @@ if st.button("Summarize"):
                 st.stop()
 
             total_len = sum(len(doc.page_content) for doc in docs)
-            use_map_reduce = (
+            use_advanced = (
                 summarization_type == "Advanced (better for long content)"
                 and total_len > 8000
             )
@@ -207,7 +221,7 @@ if st.button("Summarize"):
 
             with st.spinner("Summarizing..."):
                 try:
-                    if not use_map_reduce:
+                    if not use_advanced:
                         chain = load_summarize_chain(
                             llm,
                             chain_type="stuff",
@@ -215,14 +229,12 @@ if st.button("Summarize"):
                         )
                         summary = chain.run(docs)
                     else:
-                        chain = load_summarize_chain(
+                        summary = advanced_summarize(
                             llm,
-                            chain_type="map_reduce",
+                            docs,
                             map_prompt=map_prompt,
                             combine_prompt=combine_prompt,
-                            verbose=False,
                         )
-                        summary = chain.run(docs)
                 except Exception as e:
                     st.error(f"Error during summarization: {str(e)}")
                     st.error(traceback.format_exc())
@@ -236,7 +248,7 @@ if st.button("Summarize"):
                 st.write(f"Total content length: {total_len} characters")
                 st.write(
                     "Engine used: "
-                    + ("Advanced (map-reduce)" if use_map_reduce else "Basic (stuff)")
+                    + ("Advanced (custom map-reduce)" if use_advanced else "Basic (stuff)")
                 )
 
                 if is_youtube and documents:
